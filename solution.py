@@ -330,12 +330,17 @@ def is_feasible(layout: Layout, tree_specs: TreeSpecs) -> bool:
 
 def load_smallN_patterns(max_n: int) -> Dict[int, np.ndarray]:
     patterns: Dict[int, np.ndarray] = {}
-    # Patterns are naive placeholders; tune as needed.
+    # Patterns with proper spacing for circles that don't overlap
+    # Using normalized coordinates (0-1), will be scaled appropriately
     patterns[1] = np.array([[0.5, 0.5, 0.0]])
-    patterns[2] = np.array([[0.35, 0.5, 0.0], [0.65, 0.5, 90.0]])
-    patterns[3] = np.array([[0.5, 0.35, 0.0], [0.35, 0.65, 0.0], [0.65, 0.65, 0.0]])
-    patterns[4] = np.array([[0.3, 0.3, 0.0], [0.7, 0.3, 0.0], [0.3, 0.7, 0.0], [0.7, 0.7, 0.0]])
-    patterns[5] = np.vstack([patterns[4], np.array([[0.5, 0.5, 0.0]])])
+    # N=2: horizontal line with spacing
+    patterns[2] = np.array([[0.3, 0.5, 0.0], [0.7, 0.5, 90.0]])
+    # N=3: triangular arrangement
+    patterns[3] = np.array([[0.5, 0.3, 0.0], [0.25, 0.7, 0.0], [0.75, 0.7, 0.0]])
+    # N=4: square arrangement with wider spacing
+    patterns[4] = np.array([[0.25, 0.25, 0.0], [0.75, 0.25, 90.0], [0.25, 0.75, 180.0], [0.75, 0.75, 270.0]])
+    # N=5: 4-corners + center, with proper clearance
+    patterns[5] = np.array([[0.2, 0.2, 0.0], [0.8, 0.2, 90.0], [0.2, 0.8, 180.0], [0.8, 0.8, 270.0], [0.5, 0.5, 0.0]])
     # TODO: add more refined motifs up to max_n.
     return {n: pat for n, pat in patterns.items() if n <= max_n}
 
@@ -361,10 +366,32 @@ def place_using_smallN_pattern(
     else:
         angles = np.zeros(len(pattern))
     base_radius = compute_tree_radius(tree_specs, shipment.tree_ids[0])
-    base_side = max(1.0, 2 * base_radius * math.sqrt(shipment.N))
-    interior_side = base_side * (1.0 - params.margin_init)
-    offset = (base_side - interior_side) / 2.0
-    scaled_positions = positions * interior_side + offset
+    
+    # Calculate minimum distance between any two points in the pattern
+    min_pattern_dist = float('inf')
+    for i in range(len(positions)):
+        for j in range(i + 1, len(positions)):
+            dist = np.linalg.norm(positions[i] - positions[j])
+            min_pattern_dist = min(min_pattern_dist, dist)
+    
+    if min_pattern_dist == float('inf'):
+        min_pattern_dist = 1.0  # Single tree
+    
+    # Scale so that minimum distance in pattern = 2 * radius * (1 + margin)
+    required_min_dist = 2 * base_radius * (1.0 + params.margin_init)
+    scale_factor = required_min_dist / min_pattern_dist if min_pattern_dist > 0 else required_min_dist
+    
+    # Scale positions
+    scaled_positions = positions * scale_factor
+    
+    # Compute box side to contain all positions with padding
+    max_coord = np.max(scaled_positions)
+    min_coord = np.min(scaled_positions)
+    base_side = max_coord - min_coord + 2 * required_min_dist
+    
+    # Center the positions
+    offset = (base_side - (max_coord - min_coord)) / 2.0 - min_coord
+    scaled_positions = scaled_positions + offset
     layout = Layout(
         shipment_id=shipment.shipment_id,
         positions=scaled_positions.astype(float),
@@ -404,16 +431,18 @@ def generate_hex_grid_positions(N: int, radius: float) -> np.ndarray:
 
 def place_using_hex_tiling(shipment: Shipment, tree_specs: TreeSpecs, params: Params) -> Layout:
     base_radius = compute_tree_radius(tree_specs, shipment.tree_ids[0])
-    spacing = 2.0 * base_radius * (1.0 + params.margin_init)
-    raw_positions = generate_hex_grid_positions(shipment.N, spacing)
+    # Generate hex grid with proper spacing: radius with margin added
+    effective_radius = base_radius * (1.0 + params.margin_init)
+    raw_positions = generate_hex_grid_positions(shipment.N, effective_radius)
     min_x, max_x = raw_positions[:, 0].min(), raw_positions[:, 0].max()
     min_y, max_y = raw_positions[:, 1].min(), raw_positions[:, 1].max()
-    width = max_x - min_x + 2 * spacing
-    height = max_y - min_y + 2 * spacing
+    padding = 2 * effective_radius
+    width = max_x - min_x + padding
+    height = max_y - min_y + padding
     side = max(width, height)
-    shifted = raw_positions - np.array([min_x, min_y]) + spacing
+    shifted = raw_positions - np.array([min_x, min_y]) + effective_radius
     if side <= 0:
-        side = spacing * max(2, shipment.N)
+        side = effective_radius * 2 * max(2, shipment.N)
     layout = Layout(
         shipment_id=shipment.shipment_id,
         positions=shifted,
