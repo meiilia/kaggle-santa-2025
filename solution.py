@@ -1,393 +1,783 @@
-"""Santa 2025 – Christmas Tree Packing Challenge baseline solution."""
-from __future__ import annotations
+"""Santa 2025 – Christmas Tree Packing Challenge - Collision-Free Solution""""""Santa 2025 – Christmas Tree Packing Challenge baseline solution."""
 
-import argparse
-import math
-import os
-import random
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from __future__ import annotationsfrom __future__ import annotations
+
+
+
+import argparseimport argparse
+
+import mathimport math
+
+import osimport os
+
+import randomimport random
+
+from dataclasses import dataclassfrom dataclasses import dataclass
+
+from decimal import Decimal, getcontextfrom pathlib import Path
+
+from pathlib import Pathfrom typing import Dict, Iterable, List, Tuple
+
+from typing import Dict, List, Tuple
 
 import numpy as np
+
+import numpy as npimport pandas as pd
+
 import pandas as pd
 
-Point = Tuple[float, float]
-MetaValue = float | int | str | List[float] | List[int] | Dict[str, float]
-MetaDict = Dict[str, MetaValue]
+from shapely import affinityPoint = Tuple[float, float]
+
+from shapely.geometry import PolygonMetaValue = float | int | str | List[float] | List[int] | Dict[str, float]
+
+from shapely.strtree import STRtreeMetaDict = Dict[str, MetaValue]
 
 
-@dataclass
+
+# Set high precision for Decimal calculations
+
+getcontext().prec = 50@dataclass
+
 class Params:
-    seed: int = 42
+
+Point = Tuple[float, float]    seed: int = 42
+
     small_n_threshold: int = 12
+
     medium_n_threshold: int = 80
-    margin_init: float = 0.15
-    global_scale_min: float = 0.4
-    binary_search_tol: float = 1e-3
-    iterations_small: int = 300
+
+@dataclass    margin_init: float = 0.15
+
+class Params:    global_scale_min: float = 0.4
+
+    seed: int = 42    binary_search_tol: float = 1e-3
+
+    scale_factor: int = 1000  # Scale factor for high-precision geometry    iterations_small: int = 300
+
     iterations_medium: int = 500
+
     iterations_large: int = 800
-    sa_T0: float = 0.1
-    sa_alpha: float = 0.995
-    move_std_small: float = 0.02
+
+def set_global_seed(seed: int) -> None:    sa_T0: float = 0.1
+
+    random.seed(seed)    sa_alpha: float = 0.995
+
+    np.random.seed(seed)    move_std_small: float = 0.02
+
     move_std_medium: float = 0.03
+
     move_std_large: float = 0.04
-    micro_compress_min_factor: float = 0.96
-    micro_compress_max_factor: float = 1.0
-    micro_compress_steps: int = 8
-    micro_jitter_std: float = 0.005
-    max_smallN_pattern: int = 12
-    use_partitioned_tiling: bool = False
-    max_runtime_per_shipment: float | None = None
-    
-    # Advanced move sets (probabilities must sum to <= 1.0)
-    prob_position_move: float = 0.85  # Standard position translation
-    prob_swap_move: float = 0.10      # Swap two trees
-    prob_cluster_move: float = 0.05   # Move a cluster of trees together
-    cluster_size: int = 3              # Size of cluster for cluster moves
-    
-    # Annealing schedules: "none", "exp", "linear", "two_stage"
-    annealing_schedule: str = "exp"
-    two_stage_transition: float = 0.5  # Fraction of iterations before stage 2
-    
-    # Adaptive iteration counts
-    use_adaptive_iters: bool = False
-    adaptive_iters_min: int = 200
-    adaptive_iters_max: int = 1000
-    adaptive_iters_per_tree: float = 5.0  # Base iterations per tree
 
+class ChristmasTree:    micro_compress_min_factor: float = 0.96
 
-@dataclass
-class TreeSpecs:
-    footprint_radius: float | None = None
-    half_width: float | None = None
-    half_height: float | None = None
-    per_tree_radius: Dict[int, float] | None = None
-    safety_margin: float = 0.0
+    """    micro_compress_max_factor: float = 1.0
 
+    High-precision Christmas tree representation using shapely Polygon.    micro_compress_steps: int = 8
 
-@dataclass
-class Shipment:
-    shipment_id: str
-    tree_ids: List[int]
-    N: int
-    meta: Dict[str, float] | None = None
+    Built with Decimal arithmetic and scaled for accurate collision detection.    micro_jitter_std: float = 0.005
 
+    """    max_smallN_pattern: int = 12
 
-@dataclass
-class Layout:
-    shipment_id: str
-    positions: np.ndarray
+        use_partitioned_tiling: bool = False
+
+    def __init__(self, center_x: float, center_y: float, angle: float, scale_factor: int = 1000):    max_runtime_per_shipment: float | None = None
+
+        self.center_x = center_x    
+
+        self.center_y = center_y    # Advanced move sets (probabilities must sum to <= 1.0)
+
+        self.angle = angle    prob_position_move: float = 0.85  # Standard position translation
+
+        self.scale_factor = scale_factor    prob_swap_move: float = 0.10      # Swap two trees
+
+            prob_cluster_move: float = 0.05   # Move a cluster of trees together
+
+        # Define tree shape as a circle (can be customized to actual tree shape)    cluster_size: int = 3              # Size of cluster for cluster moves
+
+        # Using radius = 1.0 as standard    
+
+        radius = Decimal('1.0')    # Annealing schedules: "none", "exp", "linear", "two_stage"
+
+            annealing_schedule: str = "exp"
+
+        # Create circle polygon with high precision    two_stage_transition: float = 0.5  # Fraction of iterations before stage 2
+
+        num_points = 32    
+
+        points = []    # Adaptive iteration counts
+
+        for i in range(num_points):    use_adaptive_iters: bool = False
+
+            theta = Decimal(2 * math.pi * i) / Decimal(num_points)    adaptive_iters_min: int = 200
+
+            x = radius * Decimal(str(math.cos(float(theta))))    adaptive_iters_max: int = 1000
+
+            y = radius * Decimal(str(math.sin(float(theta))))    adaptive_iters_per_tree: float = 5.0  # Base iterations per tree
+
+            points.append((x, y))
+
+        
+
+        # Scale up for precision@dataclass
+
+        scaled_points = [(float(x) * scale_factor, float(y) * scale_factor) for x, y in points]class TreeSpecs:
+
+            footprint_radius: float | None = None
+
+        # Create polygon    half_width: float | None = None
+
+        polygon = Polygon(scaled_points)    half_height: float | None = None
+
+            per_tree_radius: Dict[int, float] | None = None
+
+        # Rotate    safety_margin: float = 0.0
+
+        polygon = affinity.rotate(polygon, angle, origin=(0, 0))
+
+        
+
+        # Translate to center@dataclass
+
+        polygon = affinity.translate(class Shipment:
+
+            polygon,    shipment_id: str
+
+            xoff=center_x * scale_factor,    tree_ids: List[int]
+
+            yoff=center_y * scale_factor    N: int
+
+        )    meta: Dict[str, float] | None = None
+
+        
+
+        self.polygon = polygon
+
+    @dataclass
+
+    def intersects(self, other: 'ChristmasTree') -> bool:class Layout:
+
+        """Check if this tree intersects (overlaps) with another tree."""    shipment_id: str
+
+        return self.polygon.intersects(other.polygon) and not self.polygon.touches(other.polygon)    positions: np.ndarray
+
     angles: np.ndarray
+
     box_side: float
-    N: int
-    tree_ids: List[int]
-    meta: MetaDict | None = None
 
+def generate_weighted_angle() -> float:    N: int
 
-def init_default_params() -> Params:
-    return Params()
+    """Generate a random angle with weighted distribution."""    tree_ids: List[int]
 
+    if random.random() < 0.7:    meta: MetaDict | None = None
+
+        # 70% chance: angles near multiples of 90 degrees
+
+        base = random.choice([0, 90, 180, 270])
+
+        return (base + random.gauss(0, 5)) % 360def init_default_params() -> Params:
+
+    else:    return Params()
+
+        # 30% chance: uniform random
+
+        return random.uniform(0, 360)
 
 def set_global_seed(seed: int) -> None:
+
     random.seed(seed)
-    np.random.seed(seed)
 
+def initialize_trees(num_trees: int, existing_trees: List[ChristmasTree] | None = None, scale_factor: int = 1000) -> Tuple[List[ChristmasTree], float]:    np.random.seed(seed)
 
-def _derive_trees_from_submission(submission_df: pd.DataFrame) -> pd.DataFrame:
-    ids = submission_df.get("id")
-    if ids is None:
-        raise FileNotFoundError("No trees CSV found and submission template lacks 'id' column for fallback")
-    parts = ids.astype(str).str.split("_", expand=True)
-    if parts.shape[1] >= 2:
-        shipment_ids = parts[0]
-        tree_tokens = parts[1]
-    else:
-        shipment_ids = ids.astype(str)
-        tree_tokens = pd.Series(range(len(ids)), index=ids.index)
-    shipment_ids = shipment_ids.astype(str)
-    tree_ids = pd.factorize(tree_tokens.astype(str))[0]
-    placeholder = pd.DataFrame(
-        {
-            "shipment_id": shipment_ids,
-            "tree_id": tree_ids,
-        }
-    )
-    placeholder.sort_values(["shipment_id", "tree_id"], inplace=True)
-    placeholder.reset_index(drop=True, inplace=True)
-    return placeholder
+    """
 
+    Initialize trees incrementally with collision-free placement.
 
-def load_data(input_dir: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    input_path = Path(input_dir)
-    submission_candidates = ["sample_submission.csv", "submission_sample.csv"]
-    submission_df = None
-    for name in submission_candidates:
-        file_path = input_path / name
-        if file_path.exists():
-            submission_df = pd.read_csv(file_path)
-            break
-    if submission_df is None:
-        submission_df = pd.DataFrame(columns=["id", "x", "y", "deg"])  # TODO: replace with actual template
+    def _derive_trees_from_submission(submission_df: pd.DataFrame) -> pd.DataFrame:
 
-    trees_candidates = ["trees.csv", "train.csv", "train_trees.csv"]
-    trees_df = None
-    for name in trees_candidates:
-        file_path = input_path / name
-        if file_path.exists():
-            trees_df = pd.read_csv(file_path)
-            break
-    if trees_df is None:
-        if submission_df is not None and not submission_df.empty:
-            trees_df = _derive_trees_from_submission(submission_df)
-        else:
-            raise FileNotFoundError("Could not locate trees data CSV in input directory")
+    Args:    ids = submission_df.get("id")
 
-    return trees_df, submission_df
+        num_trees: Number of trees to place    if ids is None:
 
+        existing_trees: Previously placed trees to build upon        raise FileNotFoundError("No trees CSV found and submission template lacks 'id' column for fallback")
 
-def build_tree_specs(trees_df: pd.DataFrame) -> TreeSpecs:
-    radius_cols = ["radius", "canopy_radius", "footprint_radius"]
-    radius_series = None
-    for col in radius_cols:
-        if col in trees_df.columns:
-            radius_series = trees_df[col].astype(float)
-            break
+        scale_factor: Precision scaling factor for geometry    parts = ids.astype(str).str.split("_", expand=True)
 
-    per_tree_radius: Dict[int, float] | None = None
-    footprint_radius: float | None = None
+        if parts.shape[1] >= 2:
 
-    if radius_series is not None:
-        footprint_radius = float(radius_series.max())
-        if "tree_id" in trees_df.columns:
-            per_tree_radius = dict(zip(trees_df["tree_id"], radius_series))
-    else:
-        width_col = next((c for c in ["width", "tree_width"] if c in trees_df.columns), None)
-        height_col = next((c for c in ["height", "tree_height"] if c in trees_df.columns), None)
-        if width_col and height_col:
-            half_width = float(trees_df[width_col].astype(float).max() / 2)
-            half_height = float(trees_df[height_col].astype(float).max() / 2)
-            return TreeSpecs(
-                footprint_radius=None,
-                half_width=half_width,
-                half_height=half_height,
-                per_tree_radius=None,
-                safety_margin=0.02,
-            )
-        # Fallback radius estimate
-        footprint_radius = 0.5
+    Returns:        shipment_ids = parts[0]
 
-    return TreeSpecs(
-        footprint_radius=footprint_radius,
-        per_tree_radius=per_tree_radius,
-        safety_margin=0.02,
-    )
+        Tuple of (list of placed trees, bounding box side length)        tree_tokens = parts[1]
 
+    """    else:
 
-def group_trees_into_shipments(trees_df: pd.DataFrame) -> List[Shipment]:
-    if "shipment_id" not in trees_df.columns:
-        raise KeyError("trees_df must contain a shipment_id column")
-    if "tree_id" not in trees_df.columns:
-        raise KeyError("trees_df must contain a tree_id column")
-    shipments: List[Shipment] = []
-    for shipment_id, group in trees_df.groupby("shipment_id"):
-        tree_ids = group["tree_id"].tolist()
-        shipments.append(Shipment(shipment_id=str(shipment_id), tree_ids=tree_ids, N=len(tree_ids)))
-    shipments.sort(key=lambda s: s.N)
-    return shipments
+    if existing_trees is None:        shipment_ids = ids.astype(str)
 
+        trees = []        tree_tokens = pd.Series(range(len(ids)), index=ids.index)
 
-def compute_tree_radius(tree_specs: TreeSpecs, tree_id: int | None = None) -> float:
-    if tree_id is not None and tree_specs.per_tree_radius is not None:
-        radius = tree_specs.per_tree_radius.get(tree_id)
-        if radius is not None:
-            return float(radius + tree_specs.safety_margin)
-    if tree_specs.footprint_radius is not None:
-        return float(tree_specs.footprint_radius + tree_specs.safety_margin)
-    if tree_specs.half_width is not None and tree_specs.half_height is not None:
-        return float(max(tree_specs.half_width, tree_specs.half_height) + tree_specs.safety_margin)
-    return 0.5 + tree_specs.safety_margin
+    else:    shipment_ids = shipment_ids.astype(str)
 
+        trees = list(existing_trees)    tree_ids = pd.factorize(tree_tokens.astype(str))[0]
 
-def vector_distance(p1: np.ndarray, p2: np.ndarray) -> float:
-    # Optimized distance calculation avoiding sqrt when possible
-    dx = float(p1[0] - p2[0])
-    dy = float(p1[1] - p2[1])
-    return float(np.sqrt(dx * dx + dy * dy))
+        placeholder = pd.DataFrame(
 
+    # Build STRtree for efficient spatial queries        {
 
-def trees_overlap(pos1: np.ndarray, pos2: np.ndarray, r1: float, r2: float) -> bool:
+    if trees:            "shipment_id": shipment_ids,
+
+        tree_index = STRtree([tree.polygon for tree in trees])            "tree_id": tree_ids,
+
+    else:        }
+
+        tree_index = None    )
+
+        placeholder.sort_values(["shipment_id", "tree_id"], inplace=True)
+
+    # Start radius for new tree placement    placeholder.reset_index(drop=True, inplace=True)
+
+    start_radius = 20.0    return placeholder
+
+    
+
+    for i in range(len(trees), num_trees):
+
+        placed = Falsedef load_data(input_dir: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+
+        attempts = 0    input_path = Path(input_dir)
+
+        max_attempts = 1000    submission_candidates = ["sample_submission.csv", "submission_sample.csv"]
+
+            submission_df = None
+
+        while not placed and attempts < max_attempts:    for name in submission_candidates:
+
+            # Generate random angle        file_path = input_path / name
+
+            angle = generate_weighted_angle()        if file_path.exists():
+
+                        submission_df = pd.read_csv(file_path)
+
+            # Start from outer radius and move inward            break
+
+            radius = start_radius    if submission_df is None:
+
+                    submission_df = pd.DataFrame(columns=["id", "x", "y", "deg"])  # TODO: replace with actual template
+
+            while radius > 0 and not placed:
+
+                # Random direction    trees_candidates = ["trees.csv", "train.csv", "train_trees.csv"]
+
+                theta = random.uniform(0, 2 * math.pi)    trees_df = None
+
+                center_x = radius * math.cos(theta)    for name in trees_candidates:
+
+                center_y = radius * math.sin(theta)        file_path = input_path / name
+
+                        if file_path.exists():
+
+                # Create candidate tree            trees_df = pd.read_csv(file_path)
+
+                candidate = ChristmasTree(center_x, center_y, angle, scale_factor)            break
+
+                    if trees_df is None:
+
+                # Check for collisions using STRtree        if submission_df is not None and not submission_df.empty:
+
+                has_collision = False            trees_df = _derive_trees_from_submission(submission_df)
+
+                if tree_index is not None:        else:
+
+                    # Query nearby trees            raise FileNotFoundError("Could not locate trees data CSV in input directory")
+
+                    nearby_polygons = list(tree_index.query(candidate.polygon))
+
+                    for nearby_polygon in nearby_polygons:    return trees_df, submission_df
+
+                        # Find the corresponding tree
+
+                        for existing_tree in trees:
+
+                            if existing_tree.polygon == nearby_polygon:def build_tree_specs(trees_df: pd.DataFrame) -> TreeSpecs:
+
+                                if candidate.intersects(existing_tree):    radius_cols = ["radius", "canopy_radius", "footprint_radius"]
+
+                                    has_collision = True    radius_series = None
+
+                                    break    for col in radius_cols:
+
+                        if has_collision:        if col in trees_df.columns:
+
+                            break            radius_series = trees_df[col].astype(float)
+
+                            break
+
+                if not has_collision:
+
+                    # Found a valid position! Fine-tune by backing off if needed    per_tree_radius: Dict[int, float] | None = None
+
+                    # Move towards origin in small steps to pack tighter    footprint_radius: float | None = None
+
+                    step_size = 0.05
+
+                    while radius > 0:    if radius_series is not None:
+
+                        # Try moving closer        footprint_radius = float(radius_series.max())
+
+                        new_radius = max(0, radius - step_size)        if "tree_id" in trees_df.columns:
+
+                        new_center_x = new_radius * math.cos(theta)            per_tree_radius = dict(zip(trees_df["tree_id"], radius_series))
+
+                        new_center_y = new_radius * math.sin(theta)    else:
+
+                                width_col = next((c for c in ["width", "tree_width"] if c in trees_df.columns), None)
+
+                        test_candidate = ChristmasTree(new_center_x, new_center_y, angle, scale_factor)        height_col = next((c for c in ["height", "tree_height"] if c in trees_df.columns), None)
+
+                                if width_col and height_col:
+
+                        # Check if still collision-free            half_width = float(trees_df[width_col].astype(float).max() / 2)
+
+                        test_collision = False            half_height = float(trees_df[height_col].astype(float).max() / 2)
+
+                        if tree_index is not None:            return TreeSpecs(
+
+                            nearby_polygons = list(tree_index.query(test_candidate.polygon))                footprint_radius=None,
+
+                            for nearby_polygon in nearby_polygons:                half_width=half_width,
+
+                                for existing_tree in trees:                half_height=half_height,
+
+                                    if existing_tree.polygon == nearby_polygon:                per_tree_radius=None,
+
+                                        if test_candidate.intersects(existing_tree):                safety_margin=0.02,
+
+                                            test_collision = True            )
+
+                                            break        # Fallback radius estimate
+
+                                if test_collision:        footprint_radius = 0.5
+
+                                    break
+
+                            return TreeSpecs(
+
+                        if test_collision:        footprint_radius=footprint_radius,
+
+                            # Can't move closer, use previous position        per_tree_radius=per_tree_radius,
+
+                            break        safety_margin=0.02,
+
+                        else:    )
+
+                            # Can move closer
+
+                            candidate = test_candidate
+
+                            radius = new_radiusdef group_trees_into_shipments(trees_df: pd.DataFrame) -> List[Shipment]:
+
+                        if "shipment_id" not in trees_df.columns:
+
+                    # Place the tree        raise KeyError("trees_df must contain a shipment_id column")
+
+                    trees.append(candidate)    if "tree_id" not in trees_df.columns:
+
+                            raise KeyError("trees_df must contain a tree_id column")
+
+                    # Rebuild index with new tree    shipments: List[Shipment] = []
+
+                    tree_index = STRtree([t.polygon for t in trees])    for shipment_id, group in trees_df.groupby("shipment_id"):
+
+                            tree_ids = group["tree_id"].tolist()
+
+                    placed = True        shipments.append(Shipment(shipment_id=str(shipment_id), tree_ids=tree_ids, N=len(tree_ids)))
+
+                else:    shipments.sort(key=lambda s: s.N)
+
+                    # Move inward and try again    return shipments
+
+                    radius -= 0.5
+
+            
+
+            attempts += 1def compute_tree_radius(tree_specs: TreeSpecs, tree_id: int | None = None) -> float:
+
+            if tree_id is not None and tree_specs.per_tree_radius is not None:
+
+        if not placed:        radius = tree_specs.per_tree_radius.get(tree_id)
+
+            # Fallback: place at origin with random perturbation        if radius is not None:
+
+            angle = generate_weighted_angle()            return float(radius + tree_specs.safety_margin)
+
+            center_x = random.uniform(-2, 2)    if tree_specs.footprint_radius is not None:
+
+            center_y = random.uniform(-2, 2)        return float(tree_specs.footprint_radius + tree_specs.safety_margin)
+
+            fallback_tree = ChristmasTree(center_x, center_y, angle, scale_factor)    if tree_specs.half_width is not None and tree_specs.half_height is not None:
+
+            trees.append(fallback_tree)        return float(max(tree_specs.half_width, tree_specs.half_height) + tree_specs.safety_margin)
+
+            tree_index = STRtree([t.polygon for t in trees])    return 0.5 + tree_specs.safety_margin
+
+    
+
+    # Compute bounding box
+
+    min_x = min(t.center_x - 1.0 for t in trees)def vector_distance(p1: np.ndarray, p2: np.ndarray) -> float:
+
+    max_x = max(t.center_x + 1.0 for t in trees)    # Optimized distance calculation avoiding sqrt when possible
+
+    min_y = min(t.center_y - 1.0 for t in trees)    dx = float(p1[0] - p2[0])
+
+    max_y = max(t.center_y + 1.0 for t in trees)    dy = float(p1[1] - p2[1])
+
+        return float(np.sqrt(dx * dx + dy * dy))
+
+    side = max(max_x - min_x, max_y - min_y)
+
+    
+
+    return trees, sidedef trees_overlap(pos1: np.ndarray, pos2: np.ndarray, r1: float, r2: float) -> bool:
+
     # Optimized: compute squared distance to avoid sqrt
+
     dx = float(pos1[0] - pos2[0])
-    dy = float(pos1[1] - pos2[1])
-    dist_squared = dx * dx + dy * dy
-    threshold = (r1 + r2) ** 2
-    return dist_squared < threshold
 
+def generate_all_configurations(seed: int = 42, scale_factor: int = 1000) -> pd.DataFrame:    dy = float(pos1[1] - pos2[1])
 
-def layout_has_collisions(layout: Layout, tree_specs: TreeSpecs) -> bool:
-    # Optimized collision detection using vectorized operations and spatial grid
-    if layout.N < 2:
-        return False
-    
-    # Pre-compute all radii once (caching optimization)
-    radii = np.array([compute_tree_radius(tree_specs, tid) for tid in layout.tree_ids])
-    
-    # For small N, use the original algorithm with pre-computed radii
-    if layout.N < 50:
-        for i in range(layout.N):
-            for j in range(i + 1, layout.N):
-                if trees_overlap(layout.positions[i], layout.positions[j], radii[i], radii[j]):
-                    return True
-        return False
-    
-    # For larger N, use a spatial grid approach
-    max_radius = radii.max()
-    
-    # Create spatial grid
-    grid_size = max(2.0 * max_radius, layout.box_side / max(10, int(np.sqrt(layout.N))))
-    grid_cols = int(np.ceil(layout.box_side / grid_size)) + 1
-    grid_rows = int(np.ceil(layout.box_side / grid_size)) + 1
-    
-    # Assign trees to grid cells
-    grid: Dict[Tuple[int, int], List[int]] = {}
-    for i in range(layout.N):
-        x, y = layout.positions[i]
-        col = int(x / grid_size)
-        row = int(y / grid_size)
-        cell = (row, col)
-        if cell not in grid:
-            grid[cell] = []
-        grid[cell].append(i)
-    
-    # Check collisions only within and between adjacent cells
-    checked_pairs = set()
-    for (row, col), indices in grid.items():
-        # Check within same cell
-        for idx_a in range(len(indices)):
-            for idx_b in range(idx_a + 1, len(indices)):
-                i = indices[idx_a]
-                j = indices[idx_b]
-                if (i, j) not in checked_pairs:
-                    checked_pairs.add((i, j))
-                    if trees_overlap(layout.positions[i], layout.positions[j], radii[i], radii[j]):
-                        return True
-        
-        # Check with adjacent cells
-        for dr in [-1, 0, 1]:
-            for dc in [-1, 0, 1]:
-                if dr == 0 and dc == 0:
-                    continue
-                neighbor = (row + dr, col + dc)
-                if neighbor in grid:
-                    for i in indices:
-                        for j in grid[neighbor]:
-                            if i < j and (i, j) not in checked_pairs:
-                                checked_pairs.add((i, j))
-                                if trees_overlap(layout.positions[i], layout.positions[j], radii[i], radii[j]):
-                                    return True
-    return False
+    """    dist_squared = dx * dx + dy * dy
 
+    Generate collision-free configurations for all tree counts (1 to 200).    threshold = (r1 + r2) ** 2
 
-def is_inside_square(pos: np.ndarray, box_side: float, margin: float = 0.0) -> bool:
-    return margin <= float(pos[0]) <= box_side - margin and margin <= float(pos[1]) <= box_side - margin
+        return dist_squared < threshold
 
+    Args:
 
-def layout_respects_bounds(layout: Layout, margin: float = 0.0) -> bool:
-    for point in layout.positions:
-        if not is_inside_square(point, layout.box_side, margin):
+        seed: Random seed for reproducibility
+
+        scale_factor: Precision scaling factordef layout_has_collisions(layout: Layout, tree_specs: TreeSpecs) -> bool:
+
+        # Optimized collision detection using vectorized operations and spatial grid
+
+    Returns:    if layout.N < 2:
+
+        DataFrame with columns ['x', 'y', 'deg'] and index as tree ids        return False
+
+    """    
+
+    set_global_seed(seed)    # Pre-compute all radii once (caching optimization)
+
+        radii = np.array([compute_tree_radius(tree_specs, tid) for tid in layout.tree_ids])
+
+    # Build global index    
+
+    index = [f'{n:03d}_{t}' for n in range(1, 201) for t in range(n)]    # For small N, use the original algorithm with pre-computed radii
+
+        if layout.N < 50:
+
+    # Storage for all placements        for i in range(layout.N):
+
+    all_x = []            for j in range(i + 1, layout.N):
+
+    all_y = []                if trees_overlap(layout.positions[i], layout.positions[j], radii[i], radii[j]):
+
+    all_deg = []                    return True
+
             return False
+
+    existing_trees = None    
+
+        # For larger N, use a spatial grid approach
+
+    for n in range(1, 201):    max_radius = radii.max()
+
+        if n % 20 == 0:    
+
+            print(f"Processing configuration {n}/200...")    # Create spatial grid
+
+            grid_size = max(2.0 * max_radius, layout.box_side / max(10, int(np.sqrt(layout.N))))
+
+        # Generate trees for this configuration    grid_cols = int(np.ceil(layout.box_side / grid_size)) + 1
+
+        trees, side = initialize_trees(n, existing_trees, scale_factor)    grid_rows = int(np.ceil(layout.box_side / grid_size)) + 1
+
+            
+
+        # Store placements for this configuration    # Assign trees to grid cells
+
+        for tree in trees:    grid: Dict[Tuple[int, int], List[int]] = {}
+
+            all_x.append(tree.center_x)    for i in range(layout.N):
+
+            all_y.append(tree.center_y)        x, y = layout.positions[i]
+
+            all_deg.append(tree.angle)        col = int(x / grid_size)
+
+                row = int(y / grid_size)
+
+        # Use these trees as base for next configuration        cell = (row, col)
+
+        existing_trees = trees        if cell not in grid:
+
+                grid[cell] = []
+
+    # Create submission DataFrame        grid[cell].append(i)
+
+    submission = pd.DataFrame({    
+
+        'x': all_x,    # Check collisions only within and between adjacent cells
+
+        'y': all_y,    checked_pairs = set()
+
+        'deg': all_deg    for (row, col), indices in grid.items():
+
+    }, index=index)        # Check within same cell
+
+            for idx_a in range(len(indices)):
+
+    submission.index.name = 'id'            for idx_b in range(idx_a + 1, len(indices)):
+
+                    i = indices[idx_a]
+
+    return submission                j = indices[idx_b]
+
+                if (i, j) not in checked_pairs:
+
+                    checked_pairs.add((i, j))
+
+def validate_submission_no_overlaps(submission: pd.DataFrame, scale_factor: int = 1000) -> None:                    if trees_overlap(layout.positions[i], layout.positions[j], radii[i], radii[j]):
+
+    """                        return True
+
+    Validate that submission has no overlapping trees.        
+
+    Raises AssertionError if overlaps are detected.        # Check with adjacent cells
+
+            for dr in [-1, 0, 1]:
+
+    Args:            for dc in [-1, 0, 1]:
+
+        submission: Submission DataFrame with x, y, deg columns                if dr == 0 and dc == 0:
+
+        scale_factor: Precision scaling factor                    continue
+
+    """                neighbor = (row + dr, col + dc)
+
+    print("Validating submission for overlaps...")                if neighbor in grid:
+
+                        for i in indices:
+
+    # Parse x, y, deg (remove 's' prefix if present)                        for j in grid[neighbor]:
+
+    def parse_value(val):                            if i < j and (i, j) not in checked_pairs:
+
+        if isinstance(val, str) and val.startswith('s'):                                checked_pairs.add((i, j))
+
+            return float(val[1:])                                if trees_overlap(layout.positions[i], layout.positions[j], radii[i], radii[j]):
+
+        return float(val)                                    return True
+
+        return False
+
+    x_values = submission['x'].apply(parse_value).values
+
+    y_values = submission['y'].apply(parse_value).values
+
+    deg_values = submission['deg'].apply(parse_value).valuesdef is_inside_square(pos: np.ndarray, box_side: float, margin: float = 0.0) -> bool:
+
+    ids = submission.index.values    return margin <= float(pos[0]) <= box_side - margin and margin <= float(pos[1]) <= box_side - margin
+
+    
+
+    # Group by configuration (first 3 chars of id)
+
+    configs = {}def layout_respects_bounds(layout: Layout, margin: float = 0.0) -> bool:
+
+    for i, tree_id in enumerate(ids):    for point in layout.positions:
+
+        config_num = tree_id.split('_')[0]        if not is_inside_square(point, layout.box_side, margin):
+
+        if config_num not in configs:            return False
+
+            configs[config_num] = []    return True
+
+        configs[config_num].append((tree_id, x_values[i], y_values[i], deg_values[i]))
+
+    
+
+    # Check each configuration for overlapsdef compute_layout_bounding_box(layout: Layout, tree_specs: TreeSpecs) -> tuple[float, float, float, float]:
+
+    for config_num, trees_data in configs.items():    min_x, max_x = float("inf"), float("-inf")
+
+        # Build trees    min_y, max_y = float("inf"), float("-inf")
+
+        trees = []    for idx, pos in enumerate(layout.positions):
+
+        for tree_id, x, y, deg in trees_data:        radius = compute_tree_radius(tree_specs, layout.tree_ids[idx])
+
+            tree = ChristmasTree(x, y, deg, scale_factor)        min_x = min(min_x, float(pos[0]) - radius)
+
+            trees.append((tree_id, tree))        max_x = max(max_x, float(pos[0]) + radius)
+
+                min_y = min(min_y, float(pos[1]) - radius)
+
+        # Build STRtree        max_y = max(max_y, float(pos[1]) + radius)
+
+        tree_index = STRtree([t[1].polygon for t in trees])    return min_x, max_x, min_y, max_y
+
+        
+
+        # Check all pairs
+
+        for i, (id1, tree1) in enumerate(trees):def compute_box_side(layout: Layout, tree_specs: TreeSpecs) -> float:
+
+            nearby_polygons = list(tree_index.query(tree1.polygon))    min_x, max_x, min_y, max_y = compute_layout_bounding_box(layout, tree_specs)
+
+            for nearby_polygon in nearby_polygons:    span_x = max_x - min_x
+
+                for j, (id2, tree2) in enumerate(trees):    span_y = max_y - min_y
+
+                    if i < j and tree2.polygon == nearby_polygon:    return float(max(span_x, span_y))
+
+                        if tree1.intersects(tree2):
+
+                            raise AssertionError(
+
+                                f"Overlapping trees in group {config_num}: {id1} and {id2}"def is_feasible(layout: Layout, tree_specs: TreeSpecs) -> bool:
+
+                            )    if not layout_respects_bounds(layout):
+
+            return False
+
+    print("✓ No overlaps detected!")    if layout_has_collisions(layout, tree_specs):
+
+        return False
+
     return True
 
+def format_submission_with_s_prefix(submission: pd.DataFrame) -> pd.DataFrame:
 
-def compute_layout_bounding_box(layout: Layout, tree_specs: TreeSpecs) -> tuple[float, float, float, float]:
-    min_x, max_x = float("inf"), float("-inf")
-    min_y, max_y = float("inf"), float("-inf")
-    for idx, pos in enumerate(layout.positions):
-        radius = compute_tree_radius(tree_specs, layout.tree_ids[idx])
-        min_x = min(min_x, float(pos[0]) - radius)
-        max_x = max(max_x, float(pos[0]) + radius)
-        min_y = min(min_y, float(pos[1]) - radius)
-        max_y = max(max_y, float(pos[1]) + radius)
-    return min_x, max_x, min_y, max_y
+    """
 
+    Format submission DataFrame with 's' prefix as required by Kaggle.def load_smallN_patterns(max_n: int) -> Dict[int, np.ndarray]:
 
-def compute_box_side(layout: Layout, tree_specs: TreeSpecs) -> float:
-    min_x, max_x, min_y, max_y = compute_layout_bounding_box(layout, tree_specs)
-    span_x = max_x - min_x
-    span_y = max_y - min_y
-    return float(max(span_x, span_y))
+        patterns: Dict[int, np.ndarray] = {}
 
+    Args:    # Patterns are naive placeholders; tune as needed.
 
-def is_feasible(layout: Layout, tree_specs: TreeSpecs) -> bool:
-    if not layout_respects_bounds(layout):
-        return False
-    if layout_has_collisions(layout, tree_specs):
-        return False
-    return True
+        submission: DataFrame with numeric x, y, deg columns    patterns[1] = np.array([[0.5, 0.5, 0.0]])
 
+        patterns[2] = np.array([[0.35, 0.5, 0.0], [0.65, 0.5, 90.0]])
 
-def load_smallN_patterns(max_n: int) -> Dict[int, np.ndarray]:
-    patterns: Dict[int, np.ndarray] = {}
-    # Patterns are naive placeholders; tune as needed.
-    patterns[1] = np.array([[0.5, 0.5, 0.0]])
-    patterns[2] = np.array([[0.35, 0.5, 0.0], [0.65, 0.5, 90.0]])
-    patterns[3] = np.array([[0.5, 0.35, 0.0], [0.35, 0.65, 0.0], [0.65, 0.65, 0.0]])
-    patterns[4] = np.array([[0.3, 0.3, 0.0], [0.7, 0.3, 0.0], [0.3, 0.7, 0.0], [0.7, 0.7, 0.0]])
-    patterns[5] = np.vstack([patterns[4], np.array([[0.5, 0.5, 0.0]])])
-    # TODO: add more refined motifs up to max_n.
-    return {n: pat for n, pat in patterns.items() if n <= max_n}
+    Returns:    patterns[3] = np.array([[0.5, 0.35, 0.0], [0.35, 0.65, 0.0], [0.65, 0.65, 0.0]])
 
+        DataFrame with s-prefixed string columns    patterns[4] = np.array([[0.3, 0.3, 0.0], [0.7, 0.3, 0.0], [0.3, 0.7, 0.0], [0.7, 0.7, 0.0]])
 
-def copy_layout(layout: Layout) -> Layout:
-    return Layout(
-        shipment_id=layout.shipment_id,
-        positions=layout.positions.copy(),
-        angles=layout.angles.copy(),
+    """    patterns[5] = np.vstack([patterns[4], np.array([[0.5, 0.5, 0.0]])])
+
+    result = submission.copy()    # TODO: add more refined motifs up to max_n.
+
+        return {n: pat for n, pat in patterns.items() if n <= max_n}
+
+    for col in ['x', 'y', 'deg']:
+
+        # Round to 6 decimals
+
+        result[col] = result[col].astype(float).round(6)def copy_layout(layout: Layout) -> Layout:
+
+        # Convert to string with 's' prefix    return Layout(
+
+        result[col] = 's' + result[col].astype('string')        shipment_id=layout.shipment_id,
+
+            positions=layout.positions.copy(),
+
+    return result        angles=layout.angles.copy(),
+
         box_side=layout.box_side,
+
         N=layout.N,
-        tree_ids=list(layout.tree_ids),
-        meta=dict(layout.meta) if layout.meta else None,
-    )
+
+def generate_submission(seed: int = 42, output_path: str | None = None) -> pd.DataFrame:        tree_ids=list(layout.tree_ids),
+
+    """        meta=dict(layout.meta) if layout.meta else None,
+
+    Main entry point: generate collision-free submission.    )
+
+    
+
+    Args:
+
+        seed: Random seed for reproducibilitydef place_using_smallN_pattern(
+
+        output_path: Optional path to save submission CSV    shipment: Shipment, tree_specs: TreeSpecs, pattern: np.ndarray, params: Params
+
+    ) -> Layout:
+
+    Returns:    positions = pattern[:, :2]
+
+        Formatted submission DataFrame    if pattern.shape[1] == 3:
+
+    """        angles = pattern[:, 2]
+
+    print("Generating collision-free tree configurations...")    else:
+
+            angles = np.zeros(len(pattern))
+
+    # Generate all configurations    base_radius = compute_tree_radius(tree_specs, shipment.tree_ids[0])
+
+    submission = generate_all_configurations(seed=seed)    base_side = max(1.0, 2 * base_radius * math.sqrt(shipment.N))
+
+        interior_side = base_side * (1.0 - params.margin_init)
+
+    # Validate no overlaps (using numeric values)    offset = (base_side - interior_side) / 2.0
+
+    validate_submission_no_overlaps(submission)    scaled_positions = positions * interior_side + offset
+
+        layout = Layout(
+
+    # Format with 's' prefix        shipment_id=shipment.shipment_id,
+
+    submission_formatted = format_submission_with_s_prefix(submission)        positions=scaled_positions.astype(float),
+
+            angles=np.mod(angles, 360.0),
+
+    # Save if path provided        box_side=base_side,
+
+    if output_path:        N=shipment.N,
+
+        submission_formatted.to_csv(output_path, index=True)        tree_ids=list(shipment.tree_ids),
+
+        print(f"✓ Submission saved to {output_path}")    )
+
+        layout.box_side = max(layout.box_side, compute_box_side(layout, tree_specs))
+
+    return submission_formatted    return layout
 
 
-def place_using_smallN_pattern(
-    shipment: Shipment, tree_specs: TreeSpecs, pattern: np.ndarray, params: Params
-) -> Layout:
-    positions = pattern[:, :2]
-    if pattern.shape[1] == 3:
-        angles = pattern[:, 2]
-    else:
-        angles = np.zeros(len(pattern))
-    base_radius = compute_tree_radius(tree_specs, shipment.tree_ids[0])
-    base_side = max(1.0, 2 * base_radius * math.sqrt(shipment.N))
-    interior_side = base_side * (1.0 - params.margin_init)
-    offset = (base_side - interior_side) / 2.0
-    scaled_positions = positions * interior_side + offset
-    layout = Layout(
-        shipment_id=shipment.shipment_id,
-        positions=scaled_positions.astype(float),
-        angles=np.mod(angles, 360.0),
-        box_side=base_side,
-        N=shipment.N,
-        tree_ids=list(shipment.tree_ids),
-    )
-    layout.box_side = max(layout.box_side, compute_box_side(layout, tree_specs))
-    return layout
 
 
-def compute_rows_cols_for_N(N: int, dx: float, dy: float) -> tuple[int, int]:
-    cols = max(1, int(math.ceil(math.sqrt(N))))
-    rows = int(math.ceil(N / cols))
-    return rows, cols
+
+def parse_args() -> argparse.Namespace:def compute_rows_cols_for_N(N: int, dx: float, dy: float) -> tuple[int, int]:
+
+    parser = argparse.ArgumentParser(description="Santa 2025 collision-free solution")    cols = max(1, int(math.ceil(math.sqrt(N))))
+
+    parser.add_argument("--output", type=str, default="submission.csv", help="Output CSV path")    rows = int(math.ceil(N / cols))
+
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")    return rows, cols
+
+    return parser.parse_args()
+
 
 
 def generate_hex_grid_positions(N: int, radius: float) -> np.ndarray:
-    positions: List[Point] = []
-    dx = 2 * radius
-    dy = math.sqrt(3) * radius
-    rows, cols = compute_rows_cols_for_N(N, dx, dy)
+
+if __name__ == "__main__":    positions: List[Point] = []
+
+    args = parse_args()    dx = 2 * radius
+
+    submission = generate_submission(seed=args.seed, output_path=args.output)    dy = math.sqrt(3) * radius
+
+    print(f"Generated submission with {len(submission)} tree placements")    rows, cols = compute_rows_cols_for_N(N, dx, dy)
+
     for r in range(rows):
         for c in range(cols):
             if len(positions) >= N:
