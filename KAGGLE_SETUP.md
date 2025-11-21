@@ -18,7 +18,7 @@ git push origin main
 
 **Vérifiez que le fichier est accessible ici :**
 ```
-https://raw.githubusercontent.com/meiilia/finance-notebooks/main/solution.py
+https://raw.githubusercontent.com/meiilia/kaggle-santa-2025/main/solution.py
 ```
 
 ### 2. Uploader le notebook sur Kaggle
@@ -129,8 +129,8 @@ git push origin main
 
 ## 📊 URLs importantes
 
-- **Repository GitHub** : https://github.com/meiilia/finance-notebooks
-- **solution.py (raw)** : https://raw.githubusercontent.com/meiilia/finance-notebooks/main/solution.py
+- **Repository GitHub** : https://github.com/meiilia/kaggle-santa-2025
+- **solution.py (raw)** : https://raw.githubusercontent.com/meiilia/kaggle-santa-2025/main/solution.py
 - **Competition Kaggle** : https://www.kaggle.com/competitions/santa-2024
 
 Bonne chance ! 🎄🎅
