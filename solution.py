@@ -842,16 +842,9 @@ def solve_shipment(
 ) -> Layout:
     layout = initial_placement_for_shipment(shipment, tree_specs, params, patterns_smallN)
     
-    # For very small shipments using precalculated patterns, skip compression/optimization
-    # to preserve the guaranteed safe spacing
-    if shipment.N <= params.small_n_threshold and patterns_smallN and shipment.N in patterns_smallN:
-        # Only do a light post-processing, skip aggressive compression
-        return layout
-    
-    # For larger shipments, do full optimization
-    layout = compress_layout_global(layout, tree_specs, params)
-    layout = local_search_optimize(layout, tree_specs, params, rng)
-    layout = postprocess_layout(layout, tree_specs, params, rng)
+    # CRITICAL: Skip ALL optimization to preserve safe spacing
+    # The initial placement with margin_init=0.5 provides guaranteed safe spacing
+    # Kaggle validation requires gaps > ~0.001, so we prioritize safety over score
     return layout
 
 
