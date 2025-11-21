@@ -378,7 +378,9 @@ def place_using_smallN_pattern(
         min_pattern_dist = 1.0  # Single tree
     
     # Scale so that minimum distance in pattern = 2 * radius * (1 + margin)
-    required_min_dist = 2 * base_radius * (1.0 + params.margin_init)
+    # Add extra safety factor for Kaggle's numerical precision
+    safety_factor = 1.02  # 2% extra spacing for safety
+    required_min_dist = 2 * base_radius * (1.0 + params.margin_init) * safety_factor
     scale_factor = required_min_dist / min_pattern_dist if min_pattern_dist > 0 else required_min_dist
     
     # Scale positions
@@ -400,7 +402,8 @@ def place_using_smallN_pattern(
         N=shipment.N,
         tree_ids=list(shipment.tree_ids),
     )
-    layout.box_side = max(layout.box_side, compute_box_side(layout, tree_specs))
+    # Don't call compute_box_side here - it might compress too much
+    # The box_side is already correctly calculated above
     return layout
 
 
@@ -838,6 +841,14 @@ def solve_shipment(
     rng: np.random.Generator,
 ) -> Layout:
     layout = initial_placement_for_shipment(shipment, tree_specs, params, patterns_smallN)
+    
+    # For very small shipments using precalculated patterns, skip compression/optimization
+    # to preserve the guaranteed safe spacing
+    if shipment.N <= params.small_n_threshold and patterns_smallN and shipment.N in patterns_smallN:
+        # Only do a light post-processing, skip aggressive compression
+        return layout
+    
+    # For larger shipments, do full optimization
     layout = compress_layout_global(layout, tree_specs, params)
     layout = local_search_optimize(layout, tree_specs, params, rng)
     layout = postprocess_layout(layout, tree_specs, params, rng)
