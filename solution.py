@@ -826,8 +826,8 @@ def build_submission_df(layouts: Dict[str, Layout], submission_template: pd.Data
                     "id": f"{shipment_id}_{tree_id}",
                     "shipment_id": shipment_id,
                     "tree_id": tree_id,
-                    "x": float(x),
-                    "y": float(y),
+                    "x": f"s{float(x)}",  # Format required by Kaggle: 's' prefix
+                    "y": f"s{float(y)}",  # Format required by Kaggle: 's' prefix
                     "deg": float(angle),
                 }
             )
